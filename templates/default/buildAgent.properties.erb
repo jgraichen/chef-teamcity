@@ -56,9 +56,9 @@ authorizationToken=<%= @authorization_token %>
 # Build Script Properties
 <%- @system_properties.sort.each do |key,value| %>
 system.<%= key %>=<%= value %>
-<%- end %>
+<%- end if @system_properties and @system_properties.any? %>
 
 # Environment Variables
 <%- @env_properties.sort.each do |key,value| %>
 env.<%= key %>=<%= value %>
-<%- end %>
+<%- end if @env_properties and @env_properties.any? %>
