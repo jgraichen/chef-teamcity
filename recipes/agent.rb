@@ -15,19 +15,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+require 'digest/md5'
+
+agent_count = node['teamcity']['agents'].reject { |n, agent| agent.nil? }.size
+
 
 node['teamcity']['agents'].each do |name, agent| # multiple agents
+  next if agent.nil? # support removing of agents
+
   agent_label = Proc.new do |seperator|
-    if agent['default'] == true
+    if agent_count < 2
       ''
     else
       seperator + name
     end
   end
 
-  if agent['server_url'].nil?
-    Chef::Log.fatal "You need to setup the server url for agent #{name}"
-    next
+  unless agent['server_url'] && !agent['server_url'].empty?
+    message = "You need to setup the server url for agent #{name}"
+    Chef::Log.fatal message
+    raise message
   end
 
   # Set runtime specific default values for non default agent
@@ -57,21 +64,22 @@ node['teamcity']['agents'].each do |name, agent| # multiple agents
 
   directory agent['base'] do
     user agent['user']
-    group user agent['group']
+    group agent['group']
     recursive true
 
     action :create
     not_if { File.exists? agent['base'] }
   end
 
-  install_file = "#{Chef::Config[:file_cache_path]}/teamcity-agent-#{name}.zip"
+  install_file = "#{Chef::Config[:file_cache_path]}/teamcity-agent-#{Digest::MD5.hexdigest(agent['server_url'])}.zip"
   installed_check = Proc.new { ::File.exists? "#{agent['base']}/bin" }
 
   Chef::Log.info "TeamCity Agent #{name}: Download build agent from #{agent['server_url']}/update/buildAgent.zip"
 
   remote_file install_file do
-    source(agent['server_url'] + '/update/buildAgent.zip')
+    source agent['server_url'] + '/update/buildAgent.zip'
     mode 0555
+    action :create_if_missing
     not_if &installed_check
   end
 
@@ -83,6 +91,7 @@ node['teamcity']['agents'].each do |name, agent| # multiple agents
   # is there a better approach?
   execute "unzip #{install_file} -d #{agent[:base]}" do
     user agent[:user]
+    group agent['group']
     creates "#{agent['base']}/bin"
     not_if { installed_check.call or not ::File.exists? install_file }
   end
@@ -95,6 +104,11 @@ node['teamcity']['agents'].each do |name, agent| # multiple agents
   # as of TeamCity 6.5.4 the zip does NOT contain the file mode
   %w{linux-x86-32 linux-x86-64 linux-ppc-64 }.each do |platform|
     file ::File.join( agent['base'], 'launcher/bin/TeamCityAgentService-' + platform) do
+      mode 0755
+    end
+  end
+  %w{agent findJava install}.each do |script|
+    file ::File.join( agent['base'], 'bin', "#{script}.sh") do
       mode 0755
     end
   end
@@ -124,7 +138,21 @@ node['teamcity']['agents'].each do |name, agent| # multiple agents
   # buildAgent.properties (TeamCity will restart if this file is changed)
   template agent_config do
     source "buildAgent.properties.erb"
-    variables node['teamcity']['agents'][name]
+    user agent['user']
+    user agent['group']
     mode 0644
+    variables node['teamcity']['agents'][name]
+  end
+
+  # create init.d script
+  service_name = 'teamcity-agent' + agent_label.call('-')
+  template '/etc/init.d/' + service_name do
+    source "agent.initd.erb"
+    mode 0755
+    variables node['teamcity']['agents'][name]
+  end
+  service service_name do
+    action [ :enable, :start ]
+    supports :status => true
   end
 end
