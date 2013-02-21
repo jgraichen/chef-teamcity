@@ -67,6 +67,8 @@ node['teamcity']['agents'].each do |name, agent| # multiple agents
   install_file = "#{Chef::Config[:file_cache_path]}/teamcity-agent-#{name}.zip"
   installed_check = Proc.new { ::File.exists? "#{agent['base']}/bin" }
 
+  Chef::Log.info "TeamCity Agent #{name}: Download build agent from #{agent['server_url']}/update/buildAgent.zip"
+
   remote_file install_file do
     source(agent['server_url'] + '/update/buildAgent.zip')
     mode 0555
